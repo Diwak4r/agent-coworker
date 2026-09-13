@@ -460,6 +460,74 @@ describe("classifyCommandDetailed", () => {
     });
   });
 
+  test("prompts for tilde-expanded paths so they cannot bypass allowed roots", () => {
+    const ctx = { allowedRoots: ["/home/user/project"] };
+    expect(classifyCommandDetailed("ls ~/.ssh", ctx)).toEqual({
+      kind: "prompt",
+      dangerous: false,
+      riskCode: "requires_manual_review",
+    });
+    expect(classifyCommandDetailed("git log ~/secrets", ctx)).toEqual({
+      kind: "prompt",
+      dangerous: false,
+      riskCode: "requires_manual_review",
+    });
+    expect(classifyCommandDetailed('git log "~/secrets"', ctx)).toEqual({
+      kind: "prompt",
+      dangerous: false,
+      riskCode: "requires_manual_review",
+    });
+  });
+
+  test("prompts for environment-variable path expansion so it cannot bypass allowed roots", () => {
+    const ctx = {
+      allowedRoots: ["/home/user/project"],
+      workingDirectory: "/home/user/project",
+    };
+    expect(classifyCommandDetailed("ls $HOME/.ssh", ctx)).toEqual({
+      kind: "prompt",
+      dangerous: false,
+      riskCode: "requires_manual_review",
+    });
+    expect(classifyCommandDetailed('ls "$HOME/.ssh"', ctx)).toEqual({
+      kind: "prompt",
+      dangerous: false,
+      riskCode: "requires_manual_review",
+    });
+    expect(classifyCommandDetailed("cat ${HOME}/secrets.txt", ctx)).toEqual({
+      kind: "prompt",
+      dangerous: false,
+      riskCode: "requires_manual_review",
+    });
+    expect(classifyCommandDetailed("ls $env:USERPROFILE", ctx)).toEqual({
+      kind: "prompt",
+      dangerous: false,
+      riskCode: "requires_manual_review",
+    });
+  });
+
+  test("keeps dollar literals and in-scope paths auto-approved", () => {
+    const ctx = {
+      allowedRoots: ["/home/user/project"],
+      workingDirectory: "/home/user/project",
+    };
+    expect(classifyCommandDetailed("echo cost: $5", ctx)).toEqual({
+      kind: "auto",
+      dangerous: false,
+      riskCode: "safe_auto_approved",
+    });
+    expect(classifyCommandDetailed("ls src", ctx)).toEqual({
+      kind: "auto",
+      dangerous: false,
+      riskCode: "safe_auto_approved",
+    });
+    expect(classifyCommandDetailed("ls /etc", ctx)).toEqual({
+      kind: "prompt",
+      dangerous: false,
+      riskCode: "outside_allowed_scope",
+    });
+  });
+
   test("resolves symlinked absolute paths before scope checks", async () => {
     const rootDir = await fs.mkdtemp(path.join(os.tmpdir(), "agent-approval-root-"));
     const outsideDir = await fs.mkdtemp(path.join(os.tmpdir(), "agent-approval-outside-"));

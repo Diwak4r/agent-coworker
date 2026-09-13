@@ -49,6 +49,17 @@ export type CommandApprovalContext = {
 
 const FILE_READ_REVIEW_PATTERNS: RegExp[] = [/^cat\b/, /^head\b/, /^tail\b/, /^man\b/];
 
+// Shell tilde/user-expansion forms. The classifier resolves path tokens as
+// workspace-relative, but bash/PowerShell expand these at runtime, so a token
+// like "~/.ssh" would be scoped as "<workspace>/~/.ssh" (inside) while the real
+// command reads "$HOME/.ssh" (outside). Fail closed: any command containing
+// these forms must go through manual review even if it starts with a "safe"
+// command, rather than being auto-approved on an unexpanded path. The leading
+// boundary accepts whitespace or quotes because the tokenizer de-quotes tokens
+// like "$HOME/.ssh" before scope checking. "$" must be followed by a letter,
+// underscore, or "{" so literal text such as "cost: $5" is not flagged.
+const SHELL_EXPANSION_PATH_PATTERN = /(?:^|[\s"'`])(?:~|\$[A-Za-z_{][A-Za-z0-9_}]*)/;
+
 function hasShellControlOperators(command: string): boolean {
   // Conservative: if the command contains obvious shell control operators or
   // redirections, don't auto-approve even if it starts with a "safe" command.
@@ -211,6 +222,10 @@ function hasOutsideAllowedScope(command: string, allowedRoots?: string[], workin
   return false;
 }
 
+function containsShellExpansionPath(command: string): boolean {
+  return SHELL_EXPANSION_PATH_PATTERN.test(command);
+}
+
 export function classifyCommandDetailed(
   command: string,
   ctx: CommandApprovalContext = {}
@@ -226,6 +241,12 @@ export function classifyCommandDetailed(
 
   if (hasOutsideAllowedScope(command, ctx.allowedRoots, ctx.workingDirectory)) {
     return { kind: "prompt", dangerous: false, riskCode: "outside_allowed_scope" };
+  }
+
+  // Fail closed on shell-expanded paths (~, $VAR): the scope check above only
+  // sees unexpanded tokens, so it cannot vouch for where these actually land.
+  if (containsShellExpansionPath(command)) {
+    return { kind: "prompt", dangerous: false, riskCode: "requires_manual_review" };
   }
 
   if (FILE_READ_REVIEW_PATTERNS.some((p) => p.test(command))) {

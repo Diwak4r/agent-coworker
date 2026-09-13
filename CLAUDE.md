@@ -32,11 +32,11 @@ There is no linter or formatter configured. TypeScript strict mode is the primar
 
 ### Core Loop
 
-`src/agent.ts` contains the agent turn logic. `createRunTurn()` is a factory that accepts injectable dependencies (for testing) and returns `runTurn()`. Each turn calls `generateText()` from the Vercel AI SDK with the model, system prompt, message history, and tools.
+`src/agent.ts` contains the agent turn logic. `createRunTurn()` is a factory that accepts injectable dependencies (for testing) and returns `runTurn()`. Each turn dispatches through the pluggable agent runtime layer (`src/runtime/`, default `pi`) with the model, system prompt, message history, and tools.
 
 ### Server & Protocol
 
-`src/server/session.ts` — `AgentSession` manages per-session state: message history, turn execution, and pending ask/approval requests via deferred promises. The WebSocket protocol is defined in `src/server/protocol.ts` with typed `ClientMessage` and `ServerEvent` unions.
+`src/server/session/` — `AgentSession` (in `AgentSession.ts`) manages per-session state: message history, turn execution, and pending ask/approval requests via deferred promises. The WebSocket protocol is defined in `src/server/protocol.ts` with typed `ClientMessage` and `ServerEvent` unions.
 
 ### Provider System
 

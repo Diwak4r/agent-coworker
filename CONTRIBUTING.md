@@ -42,7 +42,7 @@ Key modules:
 
 | Module | Purpose |
 |---|---|
-| `src/agent.ts` | Core agent loop. `createRunTurn()` factory returns `runTurn()` which calls the Vercel AI SDK `generateText()`. |
+| `src/agent.ts` | Core agent loop. `createRunTurn()` factory returns `runTurn()` which dispatches through the pluggable agent runtime layer (`src/runtime/`, default `pi`). |
 | `src/server/` | WebSocket server, session management, protocol types, model streaming. |
 | `src/tools/` | Tool factories. Each tool is a file exporting a `create*Tool(ctx)` function. |
 | `src/providers/` | Provider registry (`google`, `openai`, `anthropic`, `codex-cli`). Each exports `defaultModel`, `keyCandidates`, `createModel()`. |
@@ -50,7 +50,7 @@ Key modules:
 | `src/mcp/` | MCP server config registry, OAuth provider, auth store. |
 | `src/skills/` | Skill discovery and trigger extraction. |
 | `apps/TUI/` | Default TUI built with OpenTUI + Solid.js (not React). |
-| `apps/desktop/` | Tauri desktop app wrapper. |
+| `apps/desktop/` | Electron desktop app wrapper. |
 | `apps/portal/` | Next.js web portal. |
 | `src/cli/` | CLI REPL client. |
 
@@ -76,7 +76,7 @@ src/
   utils/                # Shared utilities
 apps/
   TUI/                  # OpenTUI + Solid.js terminal UI
-  desktop/              # Tauri desktop app
+  desktop/              # Electron desktop app
   portal/               # Next.js web portal
 config/
   defaults.json         # Built-in default configuration

@@ -460,6 +460,152 @@ describe("classifyCommandDetailed", () => {
     });
   });
 
+  test("prompts for tilde-expanded paths so they cannot bypass allowed roots", () => {
+    const ctx = { allowedRoots: ["/home/user/project"] };
+    expect(classifyCommandDetailed("ls ~/.ssh", ctx)).toEqual({
+      kind: "prompt",
+      dangerous: false,
+      riskCode: "requires_manual_review",
+    });
+    expect(classifyCommandDetailed("git log ~/secrets", ctx)).toEqual({
+      kind: "prompt",
+      dangerous: false,
+      riskCode: "requires_manual_review",
+    });
+    expect(classifyCommandDetailed('git log "~/secrets"', ctx)).toEqual({
+      kind: "prompt",
+      dangerous: false,
+      riskCode: "requires_manual_review",
+    });
+  });
+
+  test("prompts for expansion syntax after option assignment (=) so it cannot bypass allowed roots", () => {
+    const ctx = {
+      allowedRoots: ["/home/user/project"],
+      workingDirectory: "/home/user/project",
+    };
+    // The tokenizer treats `--path=$HOME/...` as a single option-assignment
+    // token and resolves it relative to the working directory (inside scope),
+    // while the shell expands the variable to a path outside the roots.
+    expect(classifyCommandDetailed("ls --path=$HOME/secrets", ctx)).toEqual({
+      kind: "prompt",
+      dangerous: false,
+      riskCode: "requires_manual_review",
+    });
+    expect(classifyCommandDetailed("ls --path=~/.ssh", ctx)).toEqual({
+      kind: "prompt",
+      dangerous: false,
+      riskCode: "requires_manual_review",
+    });
+  });
+
+  test("prompts for positional and special parameters whose values the classifier cannot see", () => {
+    const ctx = {
+      allowedRoots: ["/home/user/project"],
+      workingDirectory: "/home/user/project",
+    };
+    // $1, $@, and $$ expand to values only the runtime shell knows; an empty
+    // positional parameter can turn `ls $1/.ssh` into `ls /.ssh`.
+    expect(classifyCommandDetailed("ls $1/.ssh", ctx)).toEqual({
+      kind: "prompt",
+      dangerous: false,
+      riskCode: "requires_manual_review",
+    });
+    expect(classifyCommandDetailed("ls $@", ctx)).toEqual({
+      kind: "prompt",
+      dangerous: false,
+      riskCode: "requires_manual_review",
+    });
+    expect(classifyCommandDetailed("ls $$", ctx)).toEqual({
+      kind: "prompt",
+      dangerous: false,
+      riskCode: "requires_manual_review",
+    });
+    // `echo cost: $5` contains a positional parameter, not a literal — it
+    // must prompt even though the surrounding command is `echo`.
+    expect(classifyCommandDetailed("echo cost: $5", ctx)).toEqual({
+      kind: "prompt",
+      dangerous: false,
+      riskCode: "requires_manual_review",
+    });
+  });
+
+  test("prompts for brace expansion that produces unexpanded-path ambiguity", () => {
+    const ctx = {
+      allowedRoots: ["/home/user/project"],
+      workingDirectory: "/home/user/project",
+    };
+    // The shell expands {/etc,var} into two absolute paths; the classifier
+    // only sees one token starting with `{`, which it resolves as in-scope.
+    expect(classifyCommandDetailed("ls {/etc,var}", ctx)).toEqual({
+      kind: "prompt",
+      dangerous: false,
+      riskCode: "requires_manual_review",
+    });
+    expect(classifyCommandDetailed("cp file {1..3}.txt", ctx)).toEqual({
+      kind: "prompt",
+      dangerous: false,
+      riskCode: "requires_manual_review",
+    });
+  });
+
+  test("expansion guard applies even without configured allowed roots", () => {
+    // Mirrors FILE_READ_REVIEW_PATTERNS: expansions are prompt-worthy even in
+    // the no-scope configuration, where there is no allowedRoots gate to
+    // bypass but $HOME/.ssh is still worth a look.
+    expect(classifyCommandDetailed("ls $HOME/.ssh")).toEqual({
+      kind: "prompt",
+      dangerous: false,
+      riskCode: "requires_manual_review",
+    });
+    expect(classifyCommandDetailed("ls ~/.ssh")).toEqual({
+      kind: "prompt",
+      dangerous: false,
+      riskCode: "requires_manual_review",
+    });
+  });
+
+  test("keeps single-quoted literals, mid-word tildes, and non-expanding braces auto-approved", () => {
+    const ctx = {
+      allowedRoots: ["/home/user/project"],
+      workingDirectory: "/home/user/project",
+    };
+    // Single quotes suppress all expansion — the documented escape hatch for
+    // passing a literal `$VAR` through an auto-approved command.
+    expect(classifyCommandDetailed("echo 'cost: $5'", ctx)).toEqual({
+      kind: "auto",
+      dangerous: false,
+      riskCode: "safe_auto_approved",
+    });
+    // Mid-word tilde is not tilde expansion in bash.
+    expect(classifyCommandDetailed("git diff HEAD~1", ctx)).toEqual({
+      kind: "auto",
+      dangerous: false,
+      riskCode: "safe_auto_approved",
+    });
+    expect(classifyCommandDetailed("git log HEAD~2..HEAD", ctx)).toEqual({
+      kind: "auto",
+      dangerous: false,
+      riskCode: "safe_auto_approved",
+    });
+    // Single-element braces like {a} do not expand in bash.
+    expect(classifyCommandDetailed("ls a{b}", ctx)).toEqual({
+      kind: "auto",
+      dangerous: false,
+      riskCode: "safe_auto_approved",
+    });
+    expect(classifyCommandDetailed("ls src", ctx)).toEqual({
+      kind: "auto",
+      dangerous: false,
+      riskCode: "safe_auto_approved",
+    });
+    expect(classifyCommandDetailed("ls /etc", ctx)).toEqual({
+      kind: "prompt",
+      dangerous: false,
+      riskCode: "outside_allowed_scope",
+    });
+  });
+
   test("resolves symlinked absolute paths before scope checks", async () => {
     const rootDir = await fs.mkdtemp(path.join(os.tmpdir(), "agent-approval-root-"));
     const outsideDir = await fs.mkdtemp(path.join(os.tmpdir(), "agent-approval-outside-"));

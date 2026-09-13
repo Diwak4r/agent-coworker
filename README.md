@@ -128,7 +128,7 @@ Run just the WebSocket server. Connect any client to `ws://127.0.0.1:7337/ws`. B
 
 ## Tools
 
-16 built-in tools, all executed server-side with safety approvals for risky operations:
+14 built-in tools, all executed server-side with safety approvals for risky operations:
 
 | Tool | What it does |
 |---|---|
@@ -225,7 +225,7 @@ Built-in [Langfuse](https://langfuse.com) + OpenTelemetry integration. Set `LANG
 └────────┬─────────────────┬──────────────────┬───────────┘
          │                 │                  │
     Built-in Tools    Provider Registry    MCP Tools
-    (16 tools)        (Gemini/GPT/Claude)  (runtime-loaded)
+    (14 tools)        (Gemini/GPT/Claude)  (runtime-loaded)
 ```
 
 Everything flows through the WebSocket protocol. UIs never touch the runtime engine or tools directly.
@@ -235,9 +235,9 @@ Everything flows through the WebSocket protocol. UIs never touch the runtime eng
 | Path | What |
 |---|---|
 | `src/agent.ts` | Core agent loop (`createRunTurn()` factory) |
-| `src/server/session.ts` | Session state, turn execution, ask/approval flows |
+| `src/server/session/` | Session state, turn execution, ask/approval flows |
 | `src/server/protocol.ts` | WebSocket message types (`ClientMessage`, `ServerEvent`) |
-| `src/tools/` | All 16 built-in tool implementations |
+| `src/tools/` | All 14 built-in tool implementations |
 | `src/providers/` | Provider registry (Google, OpenAI, Anthropic, community CLIs) |
 | `src/mcp/` | MCP config loading, OAuth, auth storage |
 | `apps/TUI/` | Terminal UI (OpenTUI + Solid.js) |

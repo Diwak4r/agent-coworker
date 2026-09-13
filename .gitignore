@@ -33,3 +33,6 @@ uploads/
 .idea/
 *.swp
 *~
+
+# Local scratch output (verification scripts, screenshots, tool dumps)
+tmp/

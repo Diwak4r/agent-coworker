@@ -49,16 +49,89 @@ export type CommandApprovalContext = {
 
 const FILE_READ_REVIEW_PATTERNS: RegExp[] = [/^cat\b/, /^head\b/, /^tail\b/, /^man\b/];
 
-// Shell tilde/user-expansion forms. The classifier resolves path tokens as
-// workspace-relative, but bash/PowerShell expand these at runtime, so a token
-// like "~/.ssh" would be scoped as "<workspace>/~/.ssh" (inside) while the real
-// command reads "$HOME/.ssh" (outside). Fail closed: any command containing
-// these forms must go through manual review even if it starts with a "safe"
-// command, rather than being auto-approved on an unexpanded path. The leading
-// boundary accepts whitespace or quotes because the tokenizer de-quotes tokens
-// like "$HOME/.ssh" before scope checking. "$" must be followed by a letter,
-// underscore, or "{" so literal text such as "cost: $5" is not flagged.
-const SHELL_EXPANSION_PATH_PATTERN = /(?:^|[\s"'`])(?:~|\$[A-Za-z_{][A-Za-z0-9_}]*)/;
+// Quote-aware detection of syntax the shell expands before execution. The
+// scope check resolves tokens as workspace-relative paths, but bash expands
+// `~`, `$var`, and brace expressions at runtime, so an unexpanded token cannot
+// vouch for where the command actually reads or writes. A single regex cannot
+// model where expansions are legal, so detection is a small scanner with
+// deliberately conservative semantics:
+// - single quotes expand nothing (backslashes included) — they remain the
+//   documented way to pass a literal `$VAR` through an auto-approved command
+// - double quotes expand `$`, and `~`-looking words are flagged conservatively
+//   because downstream programs sometimes expand those themselves
+// - `~` expands at the start of a word (after whitespace, `=`, or `:`), while
+//   mid-word `~` like `git diff HEAD~1` stays literal
+// - `\X` backslash escapes suppress expansion of the next character
+// - `{a,b}` and `{1..2}` brace expansion outside quotes is flagged
+// - any `$` followed by a non-whitespace, non-quote character is treated as
+//   expandable: named variables, positional parameters (`$5`), and special
+//   parameters (`$@`, `$$`) alike — the classifier cannot see their values.
+function containsShellExpansionSyntax(command: string): boolean {
+  let quote: '"' | "'" | null = null;
+  for (let i = 0; i < command.length; i++) {
+    const ch = command.charAt(i);
+
+    // Inside single quotes bash expands nothing, backslashes included.
+    if (quote === "'") {
+      if (ch === "'") quote = null;
+      continue;
+    }
+
+    // Backslash escapes the next character, suppressing expansion of it.
+    if (ch === "\\") {
+      i++;
+      continue;
+    }
+
+    if (quote === '"') {
+      if (ch === '"') quote = null;
+      else if (ch === "$") return true;
+      else if (ch === "~") {
+        // bash keeps a quoted `~` literal, but downstream tools sometimes
+        // expand a leading `~` themselves, so flag it conservatively.
+        const prev = i > 0 ? command.charAt(i - 1) : undefined;
+        if (prev === '"' || prev === undefined || /[\s=:]/.test(prev)) return true;
+      }
+      continue;
+    }
+
+    if (ch === "'") {
+      quote = "'";
+      continue;
+    }
+    if (ch === '"') {
+      quote = '"';
+      continue;
+    }
+
+    // `$` followed by anything but whitespace, a quote, or end-of-string can
+    // expand — variables, positional parameters, and special parameters.
+    if (ch === "$") {
+      const next = i + 1 < command.length ? command.charAt(i + 1) : undefined;
+      if (next !== undefined && !/[\s'"`]/.test(next)) return true;
+      continue;
+    }
+
+    // Tilde expands at the start of a word only; mid-word tildes (HEAD~1)
+    // stay literal.
+    if (ch === "~") {
+      const prev = i > 0 ? command.charAt(i - 1) : undefined;
+      if (prev === undefined || /[\s=:]/.test(prev)) return true;
+      continue;
+    }
+
+    // Brace expansion: {a,b} or {1..2} outside quotes. Single-element braces
+    // like {a} do not expand in bash.
+    if (ch === "{") {
+      const close = command.indexOf("}", i);
+      if (close > i) {
+        const body = command.slice(i + 1, close);
+        if (body.includes(",") || body.includes("..")) return true;
+      }
+    }
+  }
+  return false;
+}
 
 function hasShellControlOperators(command: string): boolean {
   // Conservative: if the command contains obvious shell control operators or
@@ -222,10 +295,6 @@ function hasOutsideAllowedScope(command: string, allowedRoots?: string[], workin
   return false;
 }
 
-function containsShellExpansionPath(command: string): boolean {
-  return SHELL_EXPANSION_PATH_PATTERN.test(command);
-}
-
 export function classifyCommandDetailed(
   command: string,
   ctx: CommandApprovalContext = {}
@@ -243,9 +312,12 @@ export function classifyCommandDetailed(
     return { kind: "prompt", dangerous: false, riskCode: "outside_allowed_scope" };
   }
 
-  // Fail closed on shell-expanded paths (~, $VAR): the scope check above only
-  // sees unexpanded tokens, so it cannot vouch for where these actually land.
-  if (containsShellExpansionPath(command)) {
+  // Fail closed on syntax the shell could expand (~, $var, {a,b}): the scope
+  // check above only sees unexpanded tokens, so it cannot vouch for where
+  // these actually land once the shell is done with them. This runs even
+  // without configured allowed roots, mirroring how file-read review patterns
+  // stay unconditional: reading $HOME/.ssh is worth a prompt either way.
+  if (containsShellExpansionSyntax(command)) {
     return { kind: "prompt", dangerous: false, riskCode: "requires_manual_review" };
   }
 
